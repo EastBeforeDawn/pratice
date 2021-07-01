@@ -7,9 +7,12 @@ import java.util.HashMap;
 
 public class Main {
     public static void main(String[] args) {
-        Jdk7Map<String,String> map = new Jdk7HashMap<>();
-        map.put("1","1");
-        System.out.println(map.get("1"));
+
+        int ssize = 1;
+        while (ssize < 17) {
+            ssize <<= 1;
+        }
+        System.out.println(ssize);
 
     }
 }

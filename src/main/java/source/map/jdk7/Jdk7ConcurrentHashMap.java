@@ -444,19 +444,27 @@ public class Jdk7ConcurrentHashMap<K, V> extends Jdk7AbstractMap<K, V>
         }
 
         final V put(K key, int hash, V value, boolean onlyIfAbsent) {
+            // 尝试加锁 获取到锁直接进行put逻辑
+            // 未获取锁执行scanAndLockForPut 加锁成功返回
             HashEntry<K,V> node = tryLock() ? null :
-                scanAndLockForPut(key, hash, value);
+                    //未获取到锁执行
+                    scanAndLockForPut(key, hash, value);
             V oldValue;
             try {
                 HashEntry<K,V>[] tab = table;
+                // 计算下标
                 int index = (tab.length - 1) & hash;
+                // 获取HashEntry的第一个位置
                 HashEntry<K,V> first = entryAt(tab, index);
+                // 遍历
                 for (HashEntry<K,V> e = first;;) {
+                    // 循环遍历 有相同key值替换返回
                     if (e != null) {
                         K k;
                         if ((k = e.key) == key ||
                             (e.hash == hash && key.equals(k))) {
                             oldValue = e.value;
+                            // 不存在放入
                             if (!onlyIfAbsent) {
                                 e.value = value;
                                 ++modCount;
@@ -465,13 +473,17 @@ public class Jdk7ConcurrentHashMap<K, V> extends Jdk7AbstractMap<K, V>
                         }
                         e = e.next;
                     }
+                    // 节点是空的 1是当前seg中的HashEntry是空的  2是遍历完之后没有相同的key
                     else {
+                        // 有可能在加锁期间已经创建了node
                         if (node != null)
                             node.setNext(first);
                         else
                             node = new HashEntry<K,V>(hash, key, value, first);
                         int c = count + 1;
+                        // 针对当前seg扩容 扩容条件是包含新加进来的节点 总数量大于阈值 并且tab的长度小于最大长度
                         if (c > threshold && tab.length < MAXIMUM_CAPACITY)
+                            // 扩容
                             rehash(node);
                         else
                             setEntryAt(tab, index, node);
@@ -564,30 +576,43 @@ public class Jdk7ConcurrentHashMap<K, V> extends Jdk7AbstractMap<K, V>
          * @return a new node if key not found, else null
          */
         private HashEntry<K,V> scanAndLockForPut(K key, int hash, V value) {
+            // 找到seg中hashtable的位置
             HashEntry<K,V> first = entryForHash(this, hash);
             HashEntry<K,V> e = first;
             HashEntry<K,V> node = null;
+            // 判断重试标志
             int retries = -1; // negative while locating node
+            // 自旋加锁 如果加锁成功直接跳出 任何一个分支都有可能获取到锁 直接退出
             while (!tryLock()) {
                 HashEntry<K,V> f; // to recheck first below
+                // 默认为-1 第一次一定会进当前分支
                 if (retries < 0) {
+                    // HashTable[]是空
                     if (e == null) {
+                        // 要新建该node
                         if (node == null) // speculatively create node
+                            // 初始化第一个
                             node = new HashEntry<K,V>(hash, key, value, null);
                         retries = 0;
                     }
+                    // 桶中是否有当前key
                     else if (key.equals(e.key))
                         retries = 0;
                     else
+                        // 遍历赋值
                         e = e.next;
                 }
+                // 达到上限不需要轮询cpu 直接加锁
                 else if (++retries > MAX_SCAN_RETRIES) {
                     lock();
                     break;
                 }
+                // retries为偶数时 校验是否有其他线程更改了头节点
                 else if ((retries & 1) == 0 &&
                          (f = entryForHash(this, hash)) != first) {
+                    // 重置e
                     e = first = f; // re-traverse if entry changed
+                    // 重新设置为-1重新循环
                     retries = -1;
                 }
             }
@@ -751,17 +776,24 @@ public class Jdk7ConcurrentHashMap<K, V> extends Jdk7AbstractMap<K, V>
     @SuppressWarnings("unchecked")
     private Segment<K,V> ensureSegment(int k) {
         final Segment<K,V>[] ss = this.segments;
+        // 计算下标
         long u = (k << SSHIFT) + SBASE; // raw offset
         Segment<K,V> seg;
+        // 方法调用前已经校验 多线程环境可能有线程已经创建 重新校验
         if ((seg = (Segment<K,V>)UNSAFE.getObjectVolatile(ss, u)) == null) {
+            // 获取Segment[0]作为模版
             Segment<K,V> proto = ss[0]; // use segment 0 as prototype
             int cap = proto.table.length;
             float lf = proto.loadFactor;
             int threshold = (int)(cap * lf);
+            // 创建HashEntry数组
             HashEntry<K,V>[] tab = (HashEntry<K,V>[])new HashEntry[cap];
+            //  重新校验
             if ((seg = (Segment<K,V>)UNSAFE.getObjectVolatile(ss, u))
                 == null) { // recheck
+                // 创建Segment对象  还没放入
                 Segment<K,V> s = new Segment<K,V>(lf, threshold, tab);
+                // 自旋放入
                 while ((seg = (Segment<K,V>)UNSAFE.getObjectVolatile(ss, u))
                        == null) {
                     if (UNSAFE.compareAndSwapObject(ss, u, null, seg = s))
@@ -824,25 +856,32 @@ public class Jdk7ConcurrentHashMap<K, V> extends Jdk7AbstractMap<K, V>
         int ssize = 1;
         while (ssize < concurrencyLevel) {
             ++sshift;
+            // 找到大于等于concurrencyLevel的二次方数
             ssize <<= 1;
         }
         this.segmentShift = 32 - sshift;
         this.segmentMask = ssize - 1;
         if (initialCapacity > MAXIMUM_CAPACITY)
             initialCapacity = MAXIMUM_CAPACITY;
+        // c是每个Segment里hashtable的大小 等于初始容量/大于等于concurrencyLevel的二次方数
         int c = initialCapacity / ssize;
+        // 如果有余数 c+1
         if (c * ssize < initialCapacity)
             ++c;
+        // 最小容量 2
         int cap = MIN_SEGMENT_TABLE_CAPACITY;
+        // 找到一个大于等于2的容量作为 segments中hashtable的容量
         while (cap < c)
             cap <<= 1;
         // create segments and segments[0]
 
-        // 创建segments0
+        // 构造方法值创建segments0 用于作为其他创建segments的模版 其他segments为空 其他segments创建时直接取segments0的参数
         Segment<K,V> s0 =
             new Segment<K,V>(loadFactor, (int)(cap * loadFactor),
                              (HashEntry<K,V>[])new HashEntry[cap]);
+        // 创建Segment数组 创建后Segment大小固定 不会对Segment扩容
         Segment<K,V>[] ss = (Segment<K,V>[])new Segment[ssize];
+        // UNSAFE放入(可能会快一点)
         UNSAFE.putOrderedObject(ss, SBASE, s0); // ordered write of segments[0]
         this.segments = ss;
     }
@@ -1137,13 +1176,18 @@ public class Jdk7ConcurrentHashMap<K, V> extends Jdk7AbstractMap<K, V>
     @SuppressWarnings("unchecked")
     public V put(K key, V value) {
         Segment<K,V> s;
+        // jdk7的key不能为空
         if (value == null)
             throw new NullPointerException();
+        // key的hash值
         int hash = hash(key);
+        // 算Segment下标
         int j = (hash >>> segmentShift) & segmentMask;
         if ((s = (Segment<K,V>)UNSAFE.getObject          // nonvolatile; recheck
              (segments, (j << SSHIFT) + SBASE)) == null) //  in ensureSegment
+            // 该方法创建Segment 多线程环境下只有一个线程创建成功，其他线程也可以返回创建成功的Segment
             s = ensureSegment(j);
+        // 调用Segment put方法放入数据
         return s.put(key, hash, value, false);
     }
 

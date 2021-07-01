@@ -837,6 +837,8 @@ public class Jdk7ConcurrentHashMap<K, V> extends Jdk7AbstractMap<K, V>
         while (cap < c)
             cap <<= 1;
         // create segments and segments[0]
+
+        // 创建segments0
         Segment<K,V> s0 =
             new Segment<K,V>(loadFactor, (int)(cap * loadFactor),
                              (HashEntry<K,V>[])new HashEntry[cap]);

@@ -521,10 +521,14 @@ public class Jdk7ConcurrentHashMap<K, V> extends Jdk7AbstractMap<K, V>
              * array indexing because they are followed by volatile
              * table write.
              */
+
+            // 对当前table 二倍扩容
             HashEntry<K,V>[] oldTable = table;
             int oldCapacity = oldTable.length;
             int newCapacity = oldCapacity << 1;
+            // 计算新的阈值
             threshold = (int)(newCapacity * loadFactor);
+            // 创建新的哈希桶
             HashEntry<K,V>[] newTable =
                 (HashEntry<K,V>[]) new HashEntry[newCapacity];
             int sizeMask = newCapacity - 1;
@@ -532,12 +536,16 @@ public class Jdk7ConcurrentHashMap<K, V> extends Jdk7AbstractMap<K, V>
                 HashEntry<K,V> e = oldTable[i];
                 if (e != null) {
                     HashEntry<K,V> next = e.next;
+                    // 重算下标
                     int idx = e.hash & sizeMask;
+                    // 单个节点
                     if (next == null)   //  Single node on list
                         newTable[idx] = e;
                     else { // Reuse consecutive sequence at same slot
+                        // 多个节点的连表遍历扩容
                         HashEntry<K,V> lastRun = e;
                         int lastIdx = idx;
+                        // 找到链表最后几个放入相同哈希桶的节点 直接将头节点赋值给哈希桶
                         for (HashEntry<K,V> last = next;
                              last != null;
                              last = last.next) {
@@ -549,6 +557,7 @@ public class Jdk7ConcurrentHashMap<K, V> extends Jdk7AbstractMap<K, V>
                         }
                         newTable[lastIdx] = lastRun;
                         // Clone remaining nodes
+                        // 迁移未转移的节点
                         for (HashEntry<K,V> p = e; p != lastRun; p = p.next) {
                             V v = p.value;
                             int h = p.hash;
